@@ -41,6 +41,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc3;
+
 DMA2D_HandleTypeDef hdma2d;
 
 I2C_HandleTypeDef hi2c3;
@@ -65,6 +67,7 @@ static void MX_FMC_Init(void);
 static void MX_I2C3_Init(void);
 static void MX_LTDC_Init(void);
 static void MX_SPI5_Init(void);
+static void MX_ADC3_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
@@ -81,6 +84,32 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
   if (GPIO_Pin == KEY_BUTTON_PIN) {
     LCD_DisplayString(6, 5, (uint8_t *) "push");
   }
+}
+
+
+// conversion factor
+// adc factor: vref_mV / (2^resolution - 1)
+// op-amp factor: (9.89 + 19.80) / (9.89)
+// LM35 factor: 10 mV/degree Celsius, w/ 0v=0degrees
+
+static const double CONV_FACTOR = 3000 / 4095.0 * 9.89 / (9.89 + 19.80) * 0.1;
+
+// 19.80, 9.89
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
+  uint32_t adc_val;
+
+  adc_val = HAL_ADC_GetValue(&hadc3); // get the adc value
+
+
+  float x = adc_val * CONV_FACTOR;
+
+
+  BSP_LCD_ClearStringLine(8);
+  LCD_DisplayFloat(8, 2, x, 2);
+
+  HAL_Delay(100);
+  HAL_ADC_Start_IT(&hadc3);
 }
 
 /* USER CODE END 0 */
@@ -118,6 +147,7 @@ int main(void)
   MX_I2C3_Init();
   MX_LTDC_Init();
   MX_SPI5_Init();
+  MX_ADC3_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
@@ -135,6 +165,8 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  HAL_ADC_Start_IT(&hadc3);
+
   while (1)
   {
     /* USER CODE END WHILE */
@@ -191,6 +223,56 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief ADC3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC3_Init(void)
+{
+
+  /* USER CODE BEGIN ADC3_Init 0 */
+
+  /* USER CODE END ADC3_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC3_Init 1 */
+
+  /* USER CODE END ADC3_Init 1 */
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc3.Instance = ADC3;
+  hadc3.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc3.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc3.Init.ScanConvMode = DISABLE;
+  hadc3.Init.ContinuousConvMode = ENABLE;
+  hadc3.Init.DiscontinuousConvMode = DISABLE;
+  hadc3.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc3.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc3.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc3.Init.NbrOfConversion = 1;
+  hadc3.Init.DMAContinuousRequests = DISABLE;
+  hadc3.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_13;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC3_Init 2 */
+
+  /* USER CODE END ADC3_Init 2 */
+
 }
 
 /**
