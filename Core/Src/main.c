@@ -51,6 +51,9 @@ LTDC_HandleTypeDef hltdc;
 
 SPI_HandleTypeDef hspi5;
 
+TIM_HandleTypeDef htim9;
+TIM_HandleTypeDef htim10;
+
 UART_HandleTypeDef huart1;
 
 SDRAM_HandleTypeDef hsdram1;
@@ -69,6 +72,8 @@ static void MX_LTDC_Init(void);
 static void MX_SPI5_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_TIM9_Init(void);
+static void MX_TIM10_Init(void);
 /* USER CODE BEGIN PFP */
 
 void LCD_DisplayString(uint16_t line, uint16_t col, uint8_t *ptr);
@@ -80,12 +85,38 @@ void LCD_DisplayFloat(uint16_t line, uint16_t col, float f, int digits);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+static int dutyCycle = 500;
+
+// Button software debouncing
+uint32_t prevBtn1Tick = 0;
+uint32_t prevBtn2Tick = 0;
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
   if (GPIO_Pin == KEY_BUTTON_PIN) {
     LCD_DisplayString(6, 5, (uint8_t *) "push");
   }
-}
+  if (GPIO_Pin == GPIO_PIN_1) {
+    // Debouncing
+    uint32_t tick = HAL_GetTick();
+    if (tick - prevBtn1Tick < 200) return;
+    prevBtn1Tick = tick;
 
+    if (dutyCycle < 1000) dutyCycle += 50;
+    TIM9->CCR2 = dutyCycle;
+  }
+  if (GPIO_Pin == GPIO_PIN_2) {
+    // Debouncing
+    uint32_t tick = HAL_GetTick();
+    if (tick - prevBtn2Tick < 200) return;
+    prevBtn2Tick = tick;
+
+    if (dutyCycle > 0) dutyCycle -= 50;
+    TIM9->CCR2 = dutyCycle;
+  }
+  BSP_LCD_ClearStringLine(2);
+  LCD_DisplayString(2, 2, (uint8_t *) "duty:");
+  LCD_DisplayFloat(2, 7, dutyCycle / 10.0, 1);
+}
 
 // conversion factor
 // adc factor: vref_mV / (2^resolution - 1)
@@ -94,22 +125,20 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 static const double CONV_FACTOR = 3000 / 4095.0 * 9.89 / (9.89 + 19.80) * 0.1;
 
-// 19.80, 9.89
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+  HAL_ADC_Start_IT(&hadc3);
+}
+
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
   uint32_t adc_val;
 
   adc_val = HAL_ADC_GetValue(&hadc3); // get the adc value
 
-
   float x = adc_val * CONV_FACTOR;
-
 
   BSP_LCD_ClearStringLine(8);
   LCD_DisplayFloat(8, 2, x, 2);
-
-  HAL_Delay(100);
-  HAL_ADC_Start_IT(&hadc3);
 }
 
 /* USER CODE END 0 */
@@ -149,8 +178,10 @@ int main(void)
   MX_SPI5_Init();
   MX_ADC3_Init();
   MX_USART1_UART_Init();
+  MX_TIM9_Init();
+  MX_TIM10_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
   BSP_LCD_Init();
   BSP_LCD_DisplayOff();
   BSP_LCD_LayerDefaultInit(LCD_BACKGROUND_LAYER, LCD_FRAME_BUFFER);
@@ -161,11 +192,15 @@ int main(void)
   BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
   LCD_DisplayString(5, 2, (uint8_t *) "Hello 2TA4");
 
+  TIM9->CCR2 = 500;
+  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
+  HAL_TIM_Base_Start_IT(&htim10);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  HAL_ADC_Start_IT(&hadc3);
+//  HAL_ADC_Start_IT(&hadc3);
 
   while (1)
   {
@@ -479,6 +514,89 @@ static void MX_SPI5_Init(void)
 }
 
 /**
+  * @brief TIM9 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM9_Init(void)
+{
+
+  /* USER CODE BEGIN TIM9_Init 0 */
+
+  /* USER CODE END TIM9_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM9_Init 1 */
+
+  /* USER CODE END TIM9_Init 1 */
+  htim9.Instance = TIM9;
+  htim9.Init.Prescaler = 3600 - 1;
+  htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim9.Init.Period = 1000 - 1;
+  htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim9) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim9, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim9) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM9_Init 2 */
+
+  /* USER CODE END TIM9_Init 2 */
+  HAL_TIM_MspPostInit(&htim9);
+
+}
+
+/**
+  * @brief TIM10 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM10_Init(void)
+{
+
+  /* USER CODE BEGIN TIM10_Init 0 */
+
+  /* USER CODE END TIM10_Init 0 */
+
+  /* USER CODE BEGIN TIM10_Init 1 */
+
+  /* USER CODE END TIM10_Init 1 */
+  htim10.Instance = TIM10;
+  htim10.Init.Prescaler = 36000 - 1;
+  htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim10.Init.Period = 1000 - 1;
+  htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim10.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim10) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM10_Init 2 */
+
+  /* USER CODE END TIM10_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -568,13 +686,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
