@@ -60,6 +60,23 @@ SDRAM_HandleTypeDef hsdram1;
 
 /* USER CODE BEGIN PV */
 
+// Counter to allow the button to wait 0.5 seconds
+static uint32_t spIncremCount = 0;
+static uint32_t spDecremCount = 0;
+
+static double setpoint = 25.0;   // degrees C
+static int dutyCycle = 0;  // value per 1000
+static double tempReading = 0.0; // degrees C
+
+
+// conversion factor
+// adc factor: vref_mV / (2^resolution - 1)
+// op-amp factor: (9.89 + 19.80) / (9.89)
+// LM35 factor: 10 mV/degree Celsius, w/ 0v=0degrees
+
+static const double CONV_FACTOR = 3000 / 4095.0 * 9.89 / (9.89 + 19.80) * 0.1;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -85,60 +102,73 @@ void LCD_DisplayFloat(uint16_t line, uint16_t col, float f, int digits);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static int dutyCycle = 500;
+static void Lab4_ShowSetpoint() {
+  char buf[20];
+  sprintf(buf, "setp:%2.1f", setpoint);
+  LCD_DisplayString(1, 2, (uint8_t *) buf);
+}
 
-// Button software debouncing
-uint32_t prevBtn1Tick = 0;
-uint32_t prevBtn2Tick = 0;
+static void Lab4_UpdateDuty() {
+  char buf[20];
+
+  sprintf(buf, "duty:%3.1f",  dutyCycle / 10.0);
+  LCD_DisplayString(2, 2, (uint8_t *) buf);
+
+  sprintf(buf, "temp:%2.2f", tempReading);
+  LCD_DisplayString(3, 2, (uint8_t *) buf);
+}
+
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
   if (GPIO_Pin == KEY_BUTTON_PIN) {
     LCD_DisplayString(6, 5, (uint8_t *) "push");
   }
-  if (GPIO_Pin == GPIO_PIN_1) {
-    // Debouncing
-    uint32_t tick = HAL_GetTick();
-    if (tick - prevBtn1Tick < 200) return;
-    prevBtn1Tick = tick;
-
-    if (dutyCycle < 1000) dutyCycle += 50;
-    TIM9->CCR2 = dutyCycle;
-  }
-  if (GPIO_Pin == GPIO_PIN_2) {
-    // Debouncing
-    uint32_t tick = HAL_GetTick();
-    if (tick - prevBtn2Tick < 200) return;
-    prevBtn2Tick = tick;
-
-    if (dutyCycle > 0) dutyCycle -= 50;
-    TIM9->CCR2 = dutyCycle;
-  }
-  BSP_LCD_ClearStringLine(2);
-  LCD_DisplayString(2, 2, (uint8_t *) "duty:");
-  LCD_DisplayFloat(2, 7, dutyCycle / 10.0, 1);
+  // increment/decrement button not used here.
+  // they are implemented with a polling counter, not interrupts
 }
 
-// conversion factor
-// adc factor: vref_mV / (2^resolution - 1)
-// op-amp factor: (9.89 + 19.80) / (9.89)
-// LM35 factor: 10 mV/degree Celsius, w/ 0v=0degrees
-
-static const double CONV_FACTOR = 3000 / 4095.0 * 9.89 / (9.89 + 19.80) * 0.1;
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-  HAL_ADC_Start_IT(&hadc3);
+  // TIM10 is called every 10th of a second
+  if (htim == &htim10) {
+    // Poll for the buttons. Invert because it's pulled up instead of down
+    int incremDown = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_1);
+    int decremDown = !HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_2);
+
+    if (incremDown) {
+      if (++spIncremCount >= 5) {
+        // at least 0.5 seconds has passed; begin increasing setpoint
+        setpoint += 0.2; // 1 degree every 0.5 seconds
+        if (setpoint > 50) setpoint = 50;
+        Lab4_ShowSetpoint();
+      }
+    } else {
+      // reset the count
+      spIncremCount = 0;
+    }
+
+    if (decremDown) {
+      if (++spDecremCount >= 5) {
+        // at least 0.5 seconds has passed; begin increasing setpoint
+        setpoint -= 0.2; // 1 degree every 0.5 seconds
+        if (setpoint < 0) setpoint = 0;
+        Lab4_ShowSetpoint();
+      }
+    } else {
+      // reset the count
+      spDecremCount = 0;
+    }
+
+    // start the ADC conversion (which generates an interrupt)
+    HAL_ADC_Start_IT(&hadc3);
+    Lab4_UpdateDuty();
+  }
 }
 
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
-  uint32_t adc_val;
-
-  adc_val = HAL_ADC_GetValue(&hadc3); // get the adc value
-
-  float x = adc_val * CONV_FACTOR;
-
-  BSP_LCD_ClearStringLine(8);
-  LCD_DisplayFloat(8, 2, x, 2);
+  // ADC conversion completed
+  tempReading = HAL_ADC_GetValue(&hadc3) * CONV_FACTOR;
 }
 
 /* USER CODE END 0 */
@@ -190,17 +220,18 @@ int main(void)
   BSP_LCD_DisplayOn();
   BSP_LCD_Clear(LCD_COLOR_WHITE);
   BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
-  LCD_DisplayString(5, 2, (uint8_t *) "Hello 2TA4");
 
-  TIM9->CCR2 = 500;
+  TIM9->CCR2 = 0;
   HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
   HAL_TIM_Base_Start_IT(&htim10);
+
+  Lab4_ShowSetpoint();
+  Lab4_UpdateDuty();
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-//  HAL_ADC_Start_IT(&hadc3);
 
   while (1)
   {
@@ -581,7 +612,7 @@ static void MX_TIM10_Init(void)
 
   /* USER CODE END TIM10_Init 1 */
   htim10.Instance = TIM10;
-  htim10.Init.Prescaler = 36000 - 1;
+  htim10.Init.Prescaler = 18000 - 1;
   htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim10.Init.Period = 1000 - 1;
   htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
