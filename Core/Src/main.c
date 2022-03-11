@@ -65,7 +65,6 @@ static uint32_t spIncremCount = 0;
 static uint32_t spDecremCount = 0;
 
 static double setpoint = 25.0;   // degrees C
-static int dutyCycle = 0;  // value per 1000
 static double tempReading = 0.0; // degrees C
 
 
@@ -103,25 +102,46 @@ void LCD_DisplayFloat(uint16_t line, uint16_t col, float f, int digits);
 /* USER CODE BEGIN 0 */
 
 static void Lab4_ShowSetpoint() {
-  char buf[20];
-  sprintf(buf, "setp:%2.1f", setpoint);
-  LCD_DisplayString(1, 2, (uint8_t *) buf);
+  static char buf[20];
+  sprintf(buf, "setp:%5.1f", setpoint);
+  LCD_DisplayString(7, 2, (uint8_t *) buf);
 }
 
 static void Lab4_UpdateDuty() {
-  char buf[20];
 
-  sprintf(buf, "duty:%3.1f",  dutyCycle / 10.0);
-  LCD_DisplayString(2, 2, (uint8_t *) buf);
+  // static offset constant
+  static const double Ks = 50.0; // %
 
-  sprintf(buf, "temp:%2.2f", tempReading);
-  LCD_DisplayString(3, 2, (uint8_t *) buf);
+  // proportional control constant
+  // this makes the fan full power when error > 5 deg celsius
+  static const double Kp = 10.0; // %
+
+  double error = tempReading - setpoint;
+  double dutyCycle; // %
+
+  if (error > 0) {
+    // use fan to cool; measured > setpoint
+    dutyCycle = Ks + Kp * error;
+    if (dutyCycle > 100) dutyCycle = 100;
+  } else {
+    dutyCycle = 0;
+  }
+
+  // set the CCR for the duty cycle
+  TIM9->CCR2 = (int) (dutyCycle * 10);
+
+  static char buf[20];
+
+  sprintf(buf, "duty:%5.1f",  dutyCycle);
+  LCD_DisplayString(8, 2, (uint8_t *) buf);
+
+  sprintf(buf, "temp:%5.1f", tempReading);
+  LCD_DisplayString(9, 2, (uint8_t *) buf);
 }
 
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
   if (GPIO_Pin == KEY_BUTTON_PIN) {
-    LCD_DisplayString(6, 5, (uint8_t *) "push");
   }
   // increment/decrement button not used here.
   // they are implemented with a polling counter, not interrupts
@@ -161,7 +181,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
     // start the ADC conversion (which generates an interrupt)
     HAL_ADC_Start_IT(&hadc3);
-    Lab4_UpdateDuty();
   }
 }
 
@@ -169,6 +188,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
   // ADC conversion completed
   tempReading = HAL_ADC_GetValue(&hadc3) * CONV_FACTOR;
+  Lab4_UpdateDuty();
 }
 
 /* USER CODE END 0 */
@@ -219,6 +239,9 @@ int main(void)
   BSP_LCD_SelectLayer(LCD_FOREGROUND_LAYER);
   BSP_LCD_DisplayOn();
   BSP_LCD_Clear(LCD_COLOR_WHITE);
+  BSP_LCD_SetTextColor(LCD_COLOR_RED);
+  LCD_DisplayString(3, 1, (uint8_t *) "MT2TA4 LAB 4");
+
   BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
 
   TIM9->CCR2 = 0;
